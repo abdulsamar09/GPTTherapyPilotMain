@@ -1,0 +1,440 @@
+I am building a low-latency therapy-style GPT demo as a pilot.
+Please create a complete Replit project (backend + frontend) that includes:
+
+ChatGPT API integration (streaming)
+
+Master prompt injection (server-side only)
+
+Whisper instructions flow (optional second system message)
+
+Security & privacy rules
+
+“No chat storage” implementation
+
+Billing minutes tracking (metadata only)
+
+Voice feature: “Listen to reply” (text-to-speech)
+
+I will set OPENAI_API_KEY in Replit Secrets.
+
+🎯 Overall Goal
+
+Build a one-page web app that:
+
+Uses FastAPI (Python) as backend.
+
+Uses OpenAI (new Python SDK) for:
+
+Streaming chat completions
+
+Text-to-speech (TTS) for voice playback
+
+Frontend is a single HTML page with:
+
+Text box and Send button
+
+Streaming response display
+
+Latency metrics:
+
+TTFT (Time-To-First-Token)
+
+Full response time
+
+A “🎧 Listen to reply” button to play back the last response in audio form.
+
+Incorporates:
+
+Master therapy prompt (system message) injected server-side on every call.
+
+Optional therapist “whisper” instructions as an extra system message.
+
+Strong no-chat-storage behavior (no clinical content saved anywhere).
+
+Simple billing minutes tracking (only duration + session ID, no text).
+
+The app must run fully on Replit: pressing Run should start the server and show the UI at the Replit web URL.
+
+🧱 Tech Stack & Setup
+
+Language: Python 3
+
+Backend: FastAPI + Uvicorn
+
+Frontend: Single HTML (with minimal CSS + vanilla JS), served by FastAPI.
+
+OpenAI client: openai (new official Python SDK)
+
+Environment:
+
+Read API key from OPENAI_API_KEY (Replit Secret).
+
+requirements.txt must include at least:
+
+fastapi
+
+uvicorn
+
+openai
+
+jinja2
+
+🧠 Master Prompt Injection & Whisper Flow
+
+In main.py, define:
+
+MASTER_THERAPY_PROMPT = """
+You are an empathetic, licensed-therapist-style AI assistant.
+You respond with warmth, clarity, and psychological insight.
+[TODO: real master prompt text will be pasted here later.]
+"""
+
+
+Implement a helper function to build messages:
+
+def build_messages(patient_text: str, therapist_whisper: str | None = None):
+    messages = [
+        {"role": "system", "content": MASTER_THERAPY_PROMPT},
+    ]
+    if therapist_whisper:
+        messages.append({"role": "system", "content": therapist_whisper})
+    messages.append({"role": "user", "content": patient_text})
+    return messages
+
+
+Requirements:
+
+MASTER_THERAPY_PROMPT is only on the server, never sent to frontend.
+
+Every OpenAI chat call must use build_messages(...) so the master prompt is always included.
+
+The optional therapist_whisper parameter will be used later; for now you can pass None in the demo flow, but keep the parameter in place.
+
+Add comments explaining:
+
+Master prompt = main system directives.
+
+Whisper = optional, therapist/session-specific system layer.
+
+🔐 Security, Privacy & No-Chat-Storage Rules
+
+Implement the backend with the following guarantees:
+
+No clinical content stored:
+
+Do not write patient_text or assistant replies to any database or file.
+
+Do not log full texts in the console.
+
+Logs may contain only high-level metadata, like:
+
+“WebSocket chat request completed in X ms”
+
+“Billing record created for session XYZ”
+
+No authentication or identity is required for the demo, but:
+
+Generate a random session ID (e.g., uuid4) per WebSocket connection for internal tracking.
+
+Use HTTPS/WSS automatically via Replit environment (frontend should connect using relative ws URL so it upgrades to WSS in production).
+
+Add clear comments in code around:
+
+Where we intentionally avoid logging patient content.
+
+Where we track only duration / session ID.
+
+Example of allowed logging:
+
+print(f"Session {session_id}: chat completed, duration_seconds={duration:.2f}")
+
+
+Example of not allowed:
+
+# print(patient_text)  # ❌ do not log clinical content
+
+💳 Billing Minutes Tracking (Metadata Only)
+
+Implement simple billing tracking per chat session:
+
+For each WebSocket chat interaction:
+
+Generate a session_id (uuid string).
+
+Record start_time = time.time() when the first message is processed.
+
+Record end_time = time.time() when the model finishes streaming ("done").
+
+Compute duration_seconds = end_time - start_time.
+
+Store this in a lightweight in-memory list (for demo) as a dict like:
+
+BILLING_RECORDS = []
+
+BILLING_RECORDS.append({
+    "session_id": session_id,
+    "duration_seconds": duration_seconds,
+    "model": model_name,
+})
+
+
+Do not store patient text or clinical content in BILLING_RECORDS.
+
+Optionally expose a debug-only endpoint GET /billing-debug that returns billing records for inspection (demo only), with a comment saying this would be locked down or moved to a DB in production.
+
+🌐 Backend Endpoints
+
+In main.py, create a FastAPI app with:
+
+1. GET /health
+
+Returns:
+
+{ "status": "ok" }
+
+2. GET /
+
+Serves the one-page HTML frontend (via Jinja2 template or static file).
+
+Opening the Replit URL should show the chat UI.
+
+3. WebSocket /ws/chat
+
+Frontend will connect using:
+
+const ws = new WebSocket(`${location.origin.replace("http", "ws")}/ws/chat`);
+
+
+Behavior:
+
+When WebSocket opens and client sends a JSON message like:
+
+{
+  "type": "user_message",
+  "text": "I feel anxious lately and I don't know why."
+}
+
+
+Backend:
+
+Generates session_id and start_time = time.time().
+
+Extracts patient_text from text.
+
+Calls build_messages(patient_text, therapist_whisper=None).
+
+Uses OpenAI Chat Completions API in streaming mode:
+
+from openai import OpenAI
+client = OpenAI()
+
+stream = client.chat.completions.create(
+    model="gpt-4.1-mini",  # stand-in model for GPT-5.1 in this demo
+    messages=messages,
+    stream=True,
+)
+
+
+As chunks arrive:
+
+Extract new text from chunk.choices[0].delta.content (or equivalent).
+
+Send each piece over WebSocket as:
+
+{ "type": "chunk", "text": "partial text" }
+
+
+When streaming ends:
+
+Compute end_time, duration_seconds, and append a billing record (as described above).
+
+Send one final message:
+
+{ "type": "done" }
+
+
+Close the WebSocket (for simplicity in the demo).
+
+Add try/except around the OpenAI call and WebSocket send operations to avoid crashing.
+
+4. POST /api/tts
+
+Text-to-speech endpoint for “Listen to reply”:
+
+Request body (JSON):
+
+{ "text": "full assistant reply to be spoken" }
+
+
+Backend:
+
+Uses OpenAI TTS endpoint (e.g., client.audio.speech.create(...)), with a TTS-capable model (e.g. "gpt-4o-mini-tts" or another supported TTS model).
+
+Generates audio bytes (MP3 or OGG recommended).
+
+Response:
+
+Returns audio bytes with appropriate Content-Type, such as:
+
+Content-Type: audio/mpeg
+
+
+Do not store the text sent to this endpoint.
+
+Optionally, add a brief comment above this view explaining it’s used by the frontend “Listen” button.
+
+🖥️ Frontend (One Page with Chat + Voice + Latency)
+
+Create templates/index.html (or a static index.html) with:
+
+Title: “Therapy Chat Demo (Pilot)”.
+
+Text area for patient message:
+
+<textarea id="userInput" rows="3" placeholder="Write how you're feeling..."></textarea>
+
+
+Buttons:
+
+<button id="sendBtn">Send</button>
+<button id="listenBtn" disabled>🎧 Listen to reply</button>
+
+
+Output area:
+
+<pre id="output"></pre>
+
+
+Latency panel:
+
+<div id="latency">
+  TTFT: <span id="ttft">–</span> ms<br>
+  Full response: <span id="full">–</span> ms
+</div>
+
+
+Hidden audio player:
+
+<audio id="audioPlayer" controls style="display:none;"></audio>
+
+Frontend JS Logic
+
+Add a <script> block in the same HTML file that:
+
+Handles Send button:
+
+Clears output, ttft, full.
+
+Disables listenBtn and hides audio.
+
+Opens WebSocket:
+
+const ws = new WebSocket(`${location.origin.replace("http", "ws")}/ws/chat`);
+
+
+On ws.onopen:
+
+const startTime = performance.now();
+let firstTokenTime = null;
+const outputEl = document.getElementById("output");
+const ttftEl = document.getElementById("ttft");
+const fullEl = document.getElementById("full");
+
+ws.send(JSON.stringify({
+  type: "user_message",
+  text: document.getElementById("userInput").value
+}));
+
+
+On ws.onmessage:
+
+const data = JSON.parse(event.data);
+
+if (data.type === "chunk") {
+  if (firstTokenTime === null) {
+    firstTokenTime = performance.now();
+    const ttft = firstTokenTime - startTime;
+    ttftEl.textContent = ttft.toFixed(1);
+  }
+  outputEl.textContent += data.text;
+} else if (data.type === "done") {
+  const full = performance.now() - startTime;
+  fullEl.textContent = full.toFixed(1);
+  ws.close();
+  document.getElementById("listenBtn").disabled = false;
+}
+
+
+Handles “Listen to reply” button:
+
+On click:
+
+const text = document.getElementById("output").textContent;
+if (!text.trim()) return;
+
+fetch("/api/tts", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ text })
+})
+.then(res => res.blob())
+.then(blob => {
+  const audioUrl = URL.createObjectURL(blob);
+  const audio = document.getElementById("audioPlayer");
+  audio.src = audioUrl;
+  audio.style.display = "block";
+  audio.play();
+})
+.catch(console.error);
+
+
+Add minimal CSS to make it look clean (e.g., centered container, some padding).
+
+📁 Project Structure
+
+main.py – FastAPI app, WebSocket handler, TTS endpoint, billing logic, master prompt, whisper support.
+
+requirements.txt
+
+templates/index.html
+
+In main.py, include:
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+
+At the top of main.py, add comments explaining:
+
+This is a low-latency therapy-style GPT pilot.
+
+It implements:
+
+ChatGPT API integration (streaming)
+
+Master prompt injection
+
+Whisper flow capability
+
+Security & privacy rules (no clinical content stored)
+
+Billing minutes tracking (metadata only)
+
+Voice via /api/tts + “Listen to reply” button
+
+Please output complete, runnable code for:
+
+main.py
+
+requirements.txt
+
+templates/index.html
+
+so I can:
+
+Paste in the real MASTER_THERAPY_PROMPT,
+
+Set OPENAI_API_KEY in Replit secrets,
+
+Click Run and immediately test real-time chat + latency + voice demo.

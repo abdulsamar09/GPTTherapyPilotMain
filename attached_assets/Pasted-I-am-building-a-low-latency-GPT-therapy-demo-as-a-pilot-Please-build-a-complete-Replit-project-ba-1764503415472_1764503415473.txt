@@ -1,0 +1,335 @@
+I am building a low-latency GPT therapy demo as a pilot.
+
+Please build a complete Replit project (backend + frontend) that I can run and test in real time.
+
+🔧 Overall Goal
+
+Single Replit project with:
+
+Python + FastAPI backend
+
+One-page HTML/JS frontend
+
+Frontend connects to backend via WebSocket.
+
+Backend calls OpenAI Chat Completions API in streaming mode.
+
+A hard-coded master therapy prompt is always sent as the system message.
+
+Frontend shows:
+
+Streaming response text
+
+Latency metrics:
+
+Time-To-First-Token (TTFT)
+
+Full response time
+
+No clinical content or patient identity is stored anywhere.
+
+The Replit app should work like this when I press Run:
+
+FastAPI server starts.
+
+Visiting the Replit web URL shows the one-page chat UI.
+
+I type a message, click “Send”.
+
+I see:
+
+Tokens streaming in real time.
+
+TTFT and full-response time update.
+
+🧱 Tech Stack & Environment
+
+Language: Python 3
+
+Backend Framework: FastAPI
+
+Server: Uvicorn
+
+Frontend: Plain HTML + minimal CSS + vanilla JavaScript
+
+OpenAI client: openai (the new official package)
+
+Platform: Replit
+
+Use environment variable:
+
+OPENAI_API_KEY (I will set this in Replit Secrets)
+
+🧠 Master Therapy Prompt (Backend)
+
+Create a constant in main.py like:
+
+MASTER_THERAPY_PROMPT = """
+You are an empathetic, licensed-therapist-style AI assistant.
+[TODO: real master prompt text will be pasted here later.]
+"""
+
+
+Requirements:
+
+This prompt is never exposed to the frontend.
+
+On every OpenAI call, you must include it as a system message:
+
+messages = [
+    {"role": "system", "content": MASTER_THERAPY_PROMPT},
+    # (later we may add another system message for therapist-specific instructions)
+    {"role": "user", "content": patient_text},
+]
+
+
+Write the code so it’s easy to later:
+
+Replace MASTER_THERAPY_PROMPT with the real one.
+
+Optionally add a second system message for “therapist whisper”.
+
+🌐 Backend Endpoints
+
+Create a main.py with a FastAPI app that has:
+
+1. GET /health
+
+Returns JSON:
+
+{ "status": "ok" }
+
+2. GET /
+
+Serves the one-page frontend (an HTML template or static file).
+
+When I open the Replit URL in the browser, I should see the chat interface.
+
+3. WebSocket /ws/chat
+
+The frontend will connect with:
+
+const ws = new WebSocket("wss://<replit-url>/ws/chat");
+
+
+(Use relative path /ws/chat so it works automatically on Replit.)
+
+WebSocket behavior:
+
+When the client sends a JSON message like:
+
+{
+  "type": "user_message",
+  "text": "I feel anxious lately and I don't know why."
+}
+
+
+the backend should:
+
+Parse text as patient_text.
+
+Build messages array with MASTER_THERAPY_PROMPT as the system message.
+
+Call OpenAI Chat Completions API in streaming mode:
+
+from openai import OpenAI
+client = OpenAI()
+
+stream = client.chat.completions.create(
+    model="gpt-4.1-mini",  # stand-in model for GPT-5.1 in this demo
+    messages=messages,
+    stream=True,
+)
+
+
+For each chunk in the stream, extract incremental content and send over the WebSocket as JSON, e.g.:
+
+{ "type": "chunk", "text": "partial text here" }
+
+
+When streaming is finished, send:
+
+{ "type": "done" }
+
+
+You can either keep the WebSocket open for more user messages or close it after "done". Pick one simple approach and add a comment explaining which you chose.
+
+Add basic error handling (try/except) and make sure errors don’t crash the server.
+
+🔒 Privacy & Logging Rules
+
+The platform must not store any clinical content, transcripts, or patient identity.
+
+For this pilot:
+
+Do NOT:
+
+Save patient_text or responses in any file or database.
+
+Log full user messages or responses to the console.
+
+You MAY log non-clinical metadata, e.g.:
+
+print(f"WebSocket request completed")
+
+
+In comments, clearly explain:
+
+No clinical content is stored.
+
+In a future version, only billing minutes / duration may be recorded without storing text.
+
+🖥️ Frontend (One-Page UI)
+
+Create a simple one-page UI that is served by FastAPI at GET /.
+
+You can use Jinja2 template (templates/index.html) or static HTML. The page should include:
+
+A title, e.g. “Therapy Chat Demo (Pilot)”.
+
+A text input area for the patient message:
+
+A <textarea id="userInput"> or <input id="userInput">.
+
+A “Send” button: <button id="sendBtn">Send</button>.
+
+An output area to show streaming response:
+
+<pre id="output"></pre>
+
+
+A latency display section:
+
+<div id="latency">
+  TTFT: <span id="ttft">–</span> ms<br>
+  Full response: <span id="full">–</span> ms
+</div>
+
+Frontend JavaScript behavior
+
+When I click “Send”:
+
+Clear previous output and latency:
+
+output.textContent = "";
+ttftSpan.textContent = "–";
+fullSpan.textContent = "–";
+
+
+Open a WebSocket:
+
+const ws = new WebSocket(`${location.origin.replace("http", "ws")}/ws/chat`);
+
+
+When ws.onopen fires:
+
+Record:
+
+const startTime = performance.now();
+let firstTokenTime = null;
+
+
+Send JSON:
+
+ws.send(JSON.stringify({
+  type: "user_message",
+  text: userInput.value
+}));
+
+
+On ws.onmessage:
+
+Parse message:
+
+const data = JSON.parse(event.data);
+
+
+If data.type === "chunk":
+
+If firstTokenTime == null, set:
+
+firstTokenTime = performance.now();
+const ttft = firstTokenTime - startTime;
+document.getElementById("ttft").textContent = ttft.toFixed(1);
+
+
+Append:
+
+output.textContent += data.text;
+
+
+If data.type === "done":
+
+Compute full latency:
+
+const full = performance.now() - startTime;
+document.getElementById("full").textContent = full.toFixed(1);
+ws.close();
+
+
+Add minimal CSS so the page is readable, but keep it simple. The main purpose is to visually see streaming and latency.
+
+📁 Project Structure
+
+You may structure the project like this:
+
+main.py – FastAPI app, WebSocket handler, OpenAI integration, master prompt constant.
+
+requirements.txt – dependencies.
+
+templates/index.html – frontend (if using templates).
+
+Or use /static/index.html and serve as static.
+
+requirements.txt should include at least:
+
+fastapi
+
+uvicorn
+
+openai
+
+jinja2 (if using templates)
+
+Any WebSocket-related extra if needed (e.g. websockets or starlette dependencies).
+
+▶️ Running on Replit
+
+In main.py, include:
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+
+Replit should:
+
+Start the FastAPI app on 0.0.0.0:8000
+
+Serve / → chat page
+
+WebSocket /ws/chat works from the frontend
+
+Also add comments at the top of main.py:
+
+That this is the backend + frontend for a low-latency therapy-style GPT pilot.
+
+That the frontend measures TTFT and full response time using performance.now().
+
+✅ Final Requirements
+
+Please output complete, runnable code for:
+
+main.py
+
+requirements.txt
+
+templates/index.html (or equivalent static HTML)
+
+so that I can:
+
+Paste in my real MASTER_THERAPY_PROMPT later.
+
+Set OPENAI_API_KEY in Replit secrets.
+
+Click Run and immediately test the system in real time from the browser.
